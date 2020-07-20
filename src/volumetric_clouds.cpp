@@ -22,7 +22,7 @@
 #define RADIANS_PER_DEGREES 0.01745329251994329576
 
 XPLMDataRef reverse_z_dataref;
-
+XPLMDataRef eye_render;
 XPLMDataRef viewport_dataref;
 
 XPLMDataRef modelview_matrix_dataref;
@@ -76,7 +76,7 @@ XPLMDataRef forward_mie_scattering_dataref;
 XPLMDataRef backward_mie_scattering_dataref;
 
 XPLMDataRef local_time_dataref;
-
+XPLMCommandRef	reload_cmd=NULL;
 GLfloat quad_vertices[] =
 {
 	-1.0, -1.0,
@@ -175,7 +175,8 @@ float getWindDir(float altitude){
 auto startT= std::chrono::high_resolution_clock::now();
 int draw_callback(XPLMDrawingPhase drawing_phase, int is_before, void* callback_reference)
 {
-	if (is_before == 0)
+	int eyeI =XPLMGetDatai(eye_render);
+	if (is_before == 0 || eyeI==4)
 	{
 		XPLMSetGraphicsState(0, 5, 0, 0, 1, 0, 0);
 		glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -196,11 +197,20 @@ int draw_callback(XPLMDrawingPhase drawing_phase, int is_before, void* callback_
 		GLenum internal_format;
 
 		if (reverse_z == 0) internal_format = GL_DEPTH_COMPONENT24;
-		else internal_format = GL_DEPTH_COMPONENT32F;
-
-		if ((current_viewport_width != new_viewport_width) || (current_viewport_height != new_viewport_height)) glCopyTexImage2D(GL_TEXTURE_2D, 0, internal_format, new_viewport_x, new_viewport_y, new_viewport_width, new_viewport_height, 0);
-		else glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, new_viewport_x, new_viewport_y, new_viewport_width, new_viewport_height);
-
+		else internal_format = GL_DEPTH_COMPONENT32F_NV;
+		//internal_format = GL_DEPTH24_STENCIL8;
+		
+		//printf("%d %d\n",reverse_z,eyeI);
+		if(eyeI!=4){
+		if ((current_viewport_width != new_viewport_width) || (current_viewport_height != new_viewport_height)) 
+			glCopyTexImage2D(GL_TEXTURE_2D, 0, internal_format, new_viewport_x, new_viewport_y, new_viewport_width, new_viewport_height, 0);
+			else glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, new_viewport_x, new_viewport_y, new_viewport_width, new_viewport_height);
+		}
+		else{
+			if ((current_viewport_width != new_viewport_width) || (current_viewport_height != new_viewport_height)) 
+			glCopyTexImage2D(GL_TEXTURE_2D, 0, internal_format, new_viewport_x+(new_viewport_width), new_viewport_y, new_viewport_width, new_viewport_height, 0);
+			else glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, new_viewport_x+(new_viewport_width), new_viewport_y, new_viewport_width, new_viewport_height);
+		}
 		current_viewport_width = new_viewport_width;
 		current_viewport_height = new_viewport_height;
 
@@ -368,11 +378,11 @@ PLUGIN_API int XPluginStart(char* plugin_name, char* plugin_signature, char* plu
 	viewport_dataref = XPLMFindDataRef("sim/graphics/view/viewport");
 
 	reverse_z_dataref = XPLMFindDataRef("sim/graphics/view/is_reverse_float_z");
-
+	eye_render = XPLMFindDataRef("sim/graphics/view/draw_call_type");
 	modelview_matrix_dataref = XPLMFindDataRef("sim/graphics/view/world_matrix");
 	projection_matrix_dataref = XPLMFindDataRef("sim/graphics/view/projection_matrix");
 
-	cloud_map_scale_dataref = export_float_dataref("volumetric_clouds/cloud_map_scale", 0.000005);
+	cloud_map_scale_dataref = export_float_dataref("volumetric_clouds/cloud_map_scale", 0.000002);
 
 	base_noise_scale_dataref = export_float_dataref("volumetric_clouds/base_noise_scale", 0.00005);
 	detail_noise_scale_dataref = export_float_dataref("volumetric_clouds/detail_noise_scale", 0.0005);
@@ -433,7 +443,7 @@ PLUGIN_API int XPluginStart(char* plugin_name, char* plugin_signature, char* plu
 
 
 
-	cloud_tint_dataref = export_float_vector_dataref("volumetric_clouds/cloud_tint", {0.95, 0.95, 0.95});
+	
 
 	light_attenuation_dataref = XPLMFindDataRef("sim/graphics/misc/light_attenuation");
 
@@ -445,8 +455,8 @@ PLUGIN_API int XPluginStart(char* plugin_name, char* plugin_signature, char* plu
 	sun_tint_blue_dataref = XPLMFindDataRef("sim/graphics/misc/outside_light_level_b");
 
 	sun_gain_dataref = export_float_dataref("volumetric_clouds/sun_gain", 2.25);
-
-	atmosphere_tint_dataref = export_float_vector_dataref("volumetric_clouds/atmosphere_tint", {0.35, 0.575, 1.0});
+	cloud_tint_dataref = XPLMFindDataRef("volumetric_clouds/cloud_tint");
+	atmosphere_tint_dataref = XPLMFindDataRef("volumetric_clouds/atmosphere_tint");
 	atmospheric_blending_dataref = export_float_dataref("volumetric_clouds/atmospheric_blending", 0.15);
 
 	forward_mie_scattering_dataref = export_float_dataref("volumetric_clouds/forward_mie_scattering", 0.78);
@@ -574,12 +584,14 @@ PLUGIN_API int XPluginStart(char* plugin_name, char* plugin_signature, char* plu
 
 	glUseProgram(0);
 
-	#ifdef XPLM303
-	XPLMRegisterDrawCallback(draw_callback, xplm_Phase_Modern3D, 0, nullptr);
-	#else
-	XPLMRegisterDrawCallback(draw_callback, xplm_Phase_Airplanes, 0, nullptr);
-	#endif
 
+	if(XPLMFindDataRef("sim/graphics/view/using_modern_driver")!=NULL)
+		XPLMRegisterDrawCallback(draw_callback, xplm_Phase_Modern3D, 0, nullptr);
+	else
+		XPLMRegisterDrawCallback(draw_callback, 25, 0, nullptr); //depreciated xplm_Phase_Airplanes=25
+
+	reload_cmd=XPLMCreateCommand("xtlua/reloadvolScripts","Reload volumetric clouds xtlua scripts");
+	XPLMRegisterCommandHandler(reload_cmd, reloadScripts, 1,  (void *)0);
 	return XTLuaXPluginStart(NULL);
 }
 
@@ -591,13 +603,18 @@ PLUGIN_API void XPluginStop(void)
 
 PLUGIN_API int XPluginEnable(void)
 {
-		
+	lua_cloud_base_datarefs = XPLMFindDataRef("volumetric_clouds/weather/cloud_base_msl_m");
+	lua_cloud_type_datarefs = XPLMFindDataRef("volumetric_clouds/weather/cloud_type");
+	lua_cloud_height_datarefs = XPLMFindDataRef("volumetric_clouds/weather/height");
+	lua_cloud_density_datarefs = XPLMFindDataRef("volumetric_clouds/weather/density");
+	lua_cloud_coverage_datarefs = XPLMFindDataRef("volumetric_clouds/weather/coverage");	
 	return XTLuaXPluginEnable();
 }
 
 PLUGIN_API void XPluginDisable(void)
 {
 	 XTLuaXPluginDisable();
+	 //reloadScripts(0,0,0);
 }
 
 PLUGIN_API void XPluginReceiveMessage(XPLMPluginID sender_plugin, int message_type, void* callback_parameters)
@@ -608,6 +625,8 @@ PLUGIN_API void XPluginReceiveMessage(XPLMPluginID sender_plugin, int message_ty
 		lua_cloud_height_datarefs = XPLMFindDataRef("volumetric_clouds/weather/height");
 		lua_cloud_density_datarefs = XPLMFindDataRef("volumetric_clouds/weather/density");
 		lua_cloud_coverage_datarefs = XPLMFindDataRef("volumetric_clouds/weather/coverage");
+		cloud_tint_dataref = XPLMFindDataRef("volumetric_clouds/cloud_tint");
+		atmosphere_tint_dataref = XPLMFindDataRef("volumetric_clouds/atmosphere_tint");
 		notify_datarefs();
 	}
 	XTLuaXPluginReceiveMessage(sender_plugin,message_type,callback_parameters);
